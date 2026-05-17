@@ -16,11 +16,17 @@ If you omit the directory, it defaults to the current working directory:
 Optional:
   --dry-run   : print actions without moving
   --recursive : walk subdirectories
+
+Notes about network mounts (SMB/KIO FUSE, etc.):
+  Some mounts don't support atomic renames or metadata operations (utime/chmod).
+  This script falls back to a safe copy+delete move without preserving metadata
+  when needed.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
 from dataclasses import dataclass
@@ -111,6 +117,19 @@ def iter_audio_files(root: Path, recursive: bool) -> Iterable[Path]:
                 yield p
 
 
+def _copy_then_delete(src: Path, dst: Path) -> None:
+    """Copy file contents to dst (no metadata) then delete src."""
+    # Ensure parent exists
+    dst.parent.mkdir(parents=True, exist_ok=True)
+
+    # Copy data only (avoid copystat/utime issues on some network mounts)
+    with src.open("rb") as fsrc, dst.open("wb") as fdst:
+        shutil.copyfileobj(fsrc, fdst, length=1024 * 1024)
+
+    # Best-effort preserve executable bit is irrelevant here; still, try to delete src
+    src.unlink()
+
+
 def move_file(src: Path, dst: Path, dry_run: bool) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
 
@@ -127,7 +146,25 @@ def move_file(src: Path, dst: Path, dry_run: bool) -> None:
         print(f"DRY-RUN: move {src} -> {final_dst}")
         return
 
-    shutil.move(str(src), str(final_dst))
+    # Fast path: atomic rename/replace on same filesystem
+    try:
+        os.replace(src, final_dst)
+        return
+    except OSError:
+        pass
+
+    # Fallback: some mounts (e.g. SMB via KIO FUSE) may fail rename or metadata ops.
+    # Do a safe copy (data only) + delete.
+    try:
+        _copy_then_delete(src, final_dst)
+    except Exception:
+        # If copy failed and we might have created a partial destination, try to remove it
+        try:
+            if final_dst.exists():
+                final_dst.unlink()
+        except Exception:
+            pass
+        raise
 
 
 def main() -> int:
