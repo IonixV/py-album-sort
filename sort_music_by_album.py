@@ -10,6 +10,9 @@ Sort music files (and matching .lrc lyric files) into folders named:
 Usage:
   python3 sort_music_by_album.py /path/to/music
 
+If you omit the directory, it defaults to the current working directory:
+  python3 sort_music_by_album.py
+
 Optional:
   --dry-run   : print actions without moving
   --recursive : walk subdirectories
@@ -129,7 +132,13 @@ def move_file(src: Path, dst: Path, dry_run: bool) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Sort music + matching .lrc files into AlbumName (Year) folders.")
-    ap.add_argument("music_dir", type=Path, help="Root music directory to sort")
+    ap.add_argument(
+        "music_dir",
+        type=Path,
+        nargs="?",
+        default=Path.cwd(),
+        help="Root music directory to sort (default: current working directory)",
+    )
     ap.add_argument("--dry-run", action="store_true", help="Print actions without moving files")
     ap.add_argument("--recursive", action="store_true", help="Process files in subdirectories")
     args = ap.parse_args()
